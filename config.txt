@@ -1,0 +1,10 @@
+MONITOR_DIR = D:\exercise\python\feishu_pthoto_edit
+ZIP_PATTERN = *xg简易自动巡检系统*照片-昨日*.zip
+FIXED_ZIP = 
+WORK_DIR = D:\exercise\python\temp
+OUTPUT_DIR = D:\exercise\python\output
+SCHEDULE_TIME = 02:00
+LOG_DIR = D:\exercise\python\logs
+CLEAN_TEMP = 1
+FINAL_DIR = E:/光伏运维/01流水资料/自动下载目录/照片重命名分类后
+
