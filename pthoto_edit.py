@@ -8,6 +8,7 @@ import time
 import sys
 import re
 import pandas as pd
+from mail_notifier import send_mail
 
 # ==================== 配置文件读取 ====================
 def load_config():
@@ -526,6 +527,27 @@ def main():
                     shutil.rmtree(WORK_DIR)
                     os.makedirs(WORK_DIR, exist_ok=True)  # 重建空目录，方便后续使用
                     log(f"已清理临时工作目录：{WORK_DIR}")
+
+    # ---- 邮件通知 ----
+    if ENABLE_MAIL and MAIL_TO:
+        # 构建邮件正文
+        body_lines = ["今日巡检照片处理报告："]
+        body_lines.extend(zip_summaries)   # zip_summaries 已在循环中填充
+        body = "\n".join(body_lines)
+        subject = MAIL_SUBJECT_SUCCESS if overall_success else MAIL_SUBJECT_FAIL
+
+        success, msg = send_mail(
+            SMTP_SERVER, SMTP_PORT,
+            SMTP_USER, SMTP_PASSWORD,
+            MAIL_TO,
+            subject, body
+        )
+        if success:
+            log("邮件通知发送成功")
+        else:
+            log(f"邮件通知发送失败：{msg}")
+    else:
+        log("邮件通知未启用或配置不完整")
 
     log("======== 所有压缩包处理完成 ========")
 
