@@ -3,8 +3,16 @@ ZIP_PATTERN = *xg简易自动巡检系统*照片-昨日*.zip
 FIXED_ZIP = 
 WORK_DIR = D:\exercise\python\temp
 OUTPUT_DIR = D:\exercise\python\output
-SCHEDULE_TIME = 02:00
+SCHEDULE_TIME = 
 LOG_DIR = D:\exercise\python\logs
 CLEAN_TEMP = 1
 FINAL_DIR = E:/光伏运维/01流水资料/自动下载目录/照片重命名分类后
-
+# 邮件通知（使用QQ邮箱）
+ENABLE_MAIL = 1
+SMTP_SERVER = smtp.qq.com
+SMTP_PORT = 587
+SMTP_USER = 2604182970@qq.com
+SMTP_PASSWORD = tjeqnwmhwyiyecbg
+MAIL_TO = 330951244@qq.com,xiaoguo9486@163.com
+MAIL_SUBJECT_SUCCESS = 巡检照片处理成功
+MAIL_SUBJECT_FAIL = 巡检照片处理失败

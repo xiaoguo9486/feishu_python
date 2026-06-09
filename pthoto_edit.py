@@ -8,7 +8,9 @@ import time
 import sys
 import re
 import pandas as pd
-from mail_notifier import send_mail
+import smtplib
+from email.mime.text import MIMEText
+
 
 # ==================== 配置文件读取 ====================
 def load_config():
@@ -29,12 +31,12 @@ def load_config():
         # "FINAL_DIR": "",
         "FINAL_DIR": r"E:\光伏运维\01流水资料\自动下载目录\照片重命名分类后",   # 最终归档目录，留空则不搬运。在字符串前加 r，禁止转义
         #以下是邮件部分
-        "ENABLE_MAIL": "0",
-        "SMTP_SERVER": "smtp.139.com",
-        "SMTP_PORT": "465",
-        "SMTP_USER": "",
-        "SMTP_PASSWORD": "",
-        "MAIL_TO": "",
+        "ENABLE_MAIL": "1",
+        "SMTP_SERVER": "smtp.qq.com",
+        "SMTP_PORT": "587",
+        "SMTP_USER": "2604182970@qq.com",
+        "SMTP_PASSWORD": "tjeqnwmhwyiyecbg",
+        "MAIL_TO": "330951244@qq.com,xiaoguo9486@163.com",
         "MAIL_SUBJECT_SUCCESS": "巡检照片处理成功",
         "MAIL_SUBJECT_FAIL": "巡检照片处理失败",
     }
@@ -413,6 +415,8 @@ def classify_and_move(extract_root, filename_site_map, date_str, output_base=Non
             moved += 1
 
     log(f"分类移动完成，共处理 {moved} 张照片（其中 {unknown} 张未匹配站点/多站点歧义）")
+    return moved
+
 
 # # ==================== 主流程-老的单独执行其中一个zip和excel文件====================
 # def main():
@@ -461,9 +465,57 @@ def classify_and_move(extract_root, filename_site_map, date_str, output_base=Non
 #             shutil.rmtree(extract_root)
 #             log(f"已自动清理临时解压目录：{extract_root}")
 
+def send_mail(smtp_server, smtp_port, user, password, to_addrs, subject, body):
+    import smtplib
+    from email.mime.text import MIMEText
+
+    print("[DEBUG] send_mail 被调用")
+    if isinstance(to_addrs, str):
+        to_addrs = [addr.strip() for addr in to_addrs.split(',') if addr.strip()]
+    if not to_addrs:
+        print("[DEBUG] 收件人地址为空，返回失败")
+        return False, "收件人地址为空"
+
+    try:
+        print("[DEBUG] 开始构建 MIMEText")
+        msg = MIMEText(body, 'plain', 'utf-8')
+        msg['From'] = user
+        msg['To'] = ', '.join(to_addrs)
+        msg['Subject'] = subject
+        print(f"[DEBUG] 邮件构建完成，主题: {subject}, 收件人: {to_addrs}")
+
+        port = int(smtp_port)
+        print(f"[DEBUG] 准备连接服务器 {smtp_server}:{port}")
+        if port == 465:
+            server = smtplib.SMTP_SSL(smtp_server, port, timeout=15)
+            print("[DEBUG] 使用 SMTP_SSL 连接")
+        else:
+            server = smtplib.SMTP(smtp_server, port, timeout=15)
+            server.ehlo()
+            if port == 587:
+                server.starttls()
+                server.ehlo()
+            print(f"[DEBUG] 使用普通 SMTP 连接 (端口 {port})")
+
+        print("[DEBUG] 准备登录")
+        server.login(user, password)
+        print("[DEBUG] 登录成功，准备发送")
+        server.sendmail(user, to_addrs, msg.as_bytes())
+        print("[DEBUG] 发送成功，准备退出")
+        server.quit()
+        return True, f"邮件已发送至 {', '.join(to_addrs)}"
+    except Exception as e:
+        import traceback
+        print("[DEBUG] 发生异常：")
+        traceback.print_exc()
+        return False, f"邮件发送失败: {e}"
+
+
 # ==================== 主流程-新的循环处理：遍历每个压缩包，独立执行解压→分类→输出，并将该次生成的子目录移动至最终目录。====================
 def main():
     check_directories(cfg)
+    zip_summaries = []      # 收集每个压缩包的处理摘要
+    overall_success = True  # 标记是否全部成功
     log("======== 每日归档处理开始 ========")
 
     zip_list = find_all_zips()
@@ -474,6 +526,7 @@ def main():
     for zip_path in zip_list:
         log(f"开始处理：{os.path.basename(zip_path)}")
         extract_root = None
+        moved = 0  # 初始化
         try:
             # 1. 解压
             extract_root = unzip_file(zip_path)
@@ -500,7 +553,7 @@ def main():
             rename_photos_in_place(extract_root)
 
             # 7. 分类移动（使用当前输出子目录）
-            classify_and_move(extract_root, site_map, date_str, current_output)
+            moved = classify_and_move(extract_root, site_map, date_str, current_output)
 
             log(f"FINAL_DIR 原始值：'{FINAL_DIR}'")
             # 8. 搬运至最终目录（移动）
@@ -516,9 +569,12 @@ def main():
                 log("未配置 FINAL_DIR，输出保留在中间目录")
 
             log(f"处理完成：{os.path.basename(zip_path)}")
+            zip_summaries.append(f"{os.path.basename(zip_path)}：成功，{moved}张照片")
 
         except Exception as e:
             log(f"❌ 处理 {os.path.basename(zip_path)} 时发生错误：{e}")
+            zip_summaries.append(f"{os.path.basename(zip_path)}：失败，错误：{e}")
+            overall_success = False
             continue  # 继续处理下一个
         finally:
             if CLEAN_TEMP:
@@ -531,7 +587,7 @@ def main():
     # ---- 邮件通知 ----
     if ENABLE_MAIL and MAIL_TO:
         # 构建邮件正文
-        body_lines = ["今日巡检照片处理报告："]
+        body_lines = [f"今日（{datetime.now().strftime('%Y%m%d')}）巡检照片处理报告："]
         body_lines.extend(zip_summaries)   # zip_summaries 已在循环中填充
         body = "\n".join(body_lines)
         subject = MAIL_SUBJECT_SUCCESS if overall_success else MAIL_SUBJECT_FAIL
