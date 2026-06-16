@@ -3,21 +3,52 @@ from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import pandas as pd
 import os
+import sys
 from datetime import datetime
 import re
+import glob
+from docx.shared import RGBColor
+import zipfile
+import shutil
 
 # ==============================================
 # 配置区
 # ==============================================
-TEMPLATE_PATH = "光伏巡检报告模板-高压.docx"
-EXCEL_PATH = "金田铜业报告-YH光伏巡检-照片巡检.xlsx"
-PHOTO_FOLDER = "D:/exercise/python/photos/"
+TEMPLATE_HIGH = "光伏巡检报告模板-高压.docx"
+TEMPLATE_LOW  = "光伏巡检报告模板-低压.docx"
+
+PHOTO_FOLDER = "D:/exercise/python/photos/"       # 照片及 Excel 存放目录
 OUTPUT_FOLDER = "../output/生成的报告/"
+LOG_DIR = "D:/exercise/python/logs"    # 日志配置（新增）
+
+# 自动匹配 Excel 文件
+# # 历史：在当前目录（D:\exercise\python\feishu_pthoto_edit）搜索excel文件
+# EXCEL_PATTERN = "*巡检记录-照片xg*.xlsx"
+# excel_files = glob.glob(EXCEL_PATTERN)
+# 新：在 D:/exercise/python/photos/ 里搜索
+EXCEL_PATTERN = "*巡检记录-照片xg*.xlsx"
+excel_files = glob.glob(os.path.join(PHOTO_FOLDER, EXCEL_PATTERN))
+if not excel_files:
+    raise FileNotFoundError(f"未找到匹配的 Excel 文件，模式：{EXCEL_PATTERN}")
+EXCEL_PATH = excel_files[0]
+print(f"📂 自动匹配 Excel 文件：{EXCEL_PATH}")
+
 EXCEL_SHEET_NAME = "xg简易自动巡检系统"
+
+# 图片解压设置
+ZIP_PATTERN = "*巡检*附件*.zip"                   # 飞书下载的压缩包匹配规则
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'}
+
+# TEMPLATE_PATH = "光伏巡检报告模板-高压.docx"
+# EXCEL_PATH = "金田铜业报告-YH光伏巡检-照片巡检.xlsx"
+# PHOTO_FOLDER = "D:/exercise/python/photos/"
+# OUTPUT_FOLDER = "../output/生成的报告/"
+# EXCEL_SHEET_NAME = "xg简易自动巡检系统"
 
 # 图片统一设置
 PHOTO_WIDTH = Inches(2.2)  # ✅ 缩小至2.0英寸，保证三张图能在A4表格中并排
 PHOTO_PER_ROW = 3
+DEBUG_MODE = False
 
 # 调试模式：关闭后只输出关键日志
 DEBUG_MODE = False
@@ -365,11 +396,140 @@ def insert_photo_groups(doc, excel_row, df_columns):
 
     print("\n📊 [诊断] 已处理分组：", sorted(processed_groups))
 
+# ==============================================
+# 日志工具（新增：将控制台输出同步写入文件）
+# ==============================================
+class Tee:
+    """同时输出到控制台和日志文件的类"""
+    def __init__(self, file_path):
+        self.console = sys.stdout
+        self.log_file = open(file_path, 'w', encoding='utf-8')
+
+    def write(self, message):
+        self.console.write(message)
+        self.log_file.write(message)
+
+    def flush(self):
+        self.console.flush()
+        self.log_file.flush()
+
+    def close(self):
+        self.log_file.close()
+
+def setup_logging():
+    """初始化日志：创建目录，返回日志文件路径和Tee对象"""
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log_filename = f"process_{datetime.now().strftime('%Y%m%d%H%M%S')}.log"
+    log_path = os.path.join(LOG_DIR, log_filename)
+    tee = Tee(log_path)
+    sys.stdout = tee
+    return tee, log_path
+
+# ==============================================
+# 新增：解压图片函数
+# ==============================================
+def unpack_photos():
+    ...
+
+# ==============================================
+# 新增：解压图片函数
+# ==============================================
+def unpack_photos():
+    """
+    自动解压 PHOTO_FOLDER 下的飞书附件 zip，将所有图片平铺到 PHOTO_FOLDER 根目录。
+    如果没有找到压缩包，则跳过。
+    """
+    search_path = os.path.join(PHOTO_FOLDER, ZIP_PATTERN)
+    zip_files = glob.glob(search_path)
+    if not zip_files:
+        print("ℹ️  未找到需解压的压缩包，跳过解压步骤。")
+        return
+
+    print(f"📦 找到 {len(zip_files)} 个压缩包，开始解压...")
+    for zip_path in zip_files:
+        print(f"   ⏳ 正在处理：{os.path.basename(zip_path)}")
+        temp_dir = os.path.join(PHOTO_FOLDER, "_temp_unpack")
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        os.makedirs(temp_dir, exist_ok=True)
+
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
+
+        moved_count = 0
+        for root, dirs, files in os.walk(temp_dir):
+            for file in files:
+                ext = os.path.splitext(file)[1].lower()
+                if ext in IMAGE_EXTENSIONS:
+                    src = os.path.join(root, file)
+                    dst = os.path.join(PHOTO_FOLDER, file)
+                    # 处理重名
+                    if os.path.exists(dst):
+                        base, ext_orig = os.path.splitext(file)
+                        counter = 1
+                        while True:
+                            new_name = f"{base}_{counter}{ext_orig}"
+                            dst = os.path.join(PHOTO_FOLDER, new_name)
+                            if not os.path.exists(dst):
+                                break
+                            counter += 1
+                        print(f"      ⚠️  重名处理：{file} → {new_name}")
+                    shutil.move(src, dst)
+                    moved_count += 1
+
+        shutil.rmtree(temp_dir)
+        print(f"   ✅ 解压完成，移动了 {moved_count} 张图片")
+
+        # 可选：删除已处理的压缩包（取消下一行注释即可删除）
+        # os.remove(zip_path)
+        # print(f"   🗑️  已删除压缩包")
+
+    print("✅ 所有压缩包处理完毕。")
+
+def set_abnormal_status_red(doc):
+    """
+    遍历文档所有表格，将状态为「异常」的单元格文字设置为 加粗+红色
+    同时处理「状态汇总表」和「巡检明细表」
+    """
+    # 标准红色，可根据需要调整RGB数值
+    red_color = RGBColor(255, 0, 0)
+
+    for table in doc.tables:
+        # 遍历表格所有行（跳过表头行，从第2行开始）
+        for row_idx, row in enumerate(table.rows):
+            if row_idx == 0:
+                continue
+
+            # --------------------------
+            # 适配两种表格的状态列位置
+            # 状态汇总表：第3列（索引2）
+            # 巡检明细表：第3列（索引2）
+            # 两者位置一致，统一处理
+            # --------------------------
+            cell = row.cells[2]
+            status_text = cell.text.strip()
+
+            # 只处理内容为「异常」的单元格
+            if status_text == "异常":
+                # 遍历单元格内所有段落、所有文本块（run）
+                # 格式是绑定在run上的，必须逐个设置才能全部生效
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.font.bold = True  # 加粗
+                        run.font.color.rgb = red_color  # 标红
+
 
 # ==============================================
 # 主函数
 # ==============================================
 def main():
+    # ---------- 日志初始化 ----------
+    tee, log_path = setup_logging()
+    print(f"📝 日志文件：{log_path}")
+
+    # ---------- 第 0 步：自动解压图片 ----------
+    unpack_photos()
+
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
     print("📥 正在读取Excel数据...")
@@ -380,7 +540,17 @@ def main():
     for index, excel_row in df.iterrows():
         print(f"\n🔄 正在生成第 {index+1}/{total} 份报告...")
 
-        doc = Document(TEMPLATE_PATH)
+        grid_type = str(excel_row["并网类型"]).strip()
+        if "高压" in grid_type:
+            template_path = TEMPLATE_HIGH
+        elif "低压" in grid_type:
+            template_path = TEMPLATE_LOW
+        else:
+            print(f"   ⚠️  无法识别并网类型 '{grid_type}'，默认使用高压模板")
+            template_path = TEMPLATE_HIGH
+
+        print(f"   📄 使用模板：{os.path.basename(template_path)}")
+        doc = Document(template_path)
 
         # 1. 基础数据
         data = {
@@ -450,10 +620,14 @@ def main():
         # 6. 插入图片
         insert_photo_groups(doc, excel_row, df.columns)
 
+        # ===== 【新增】异常状态标红加粗 =====
+        set_abnormal_status_red(doc)
+
         # 7. 保存报告
         station_name = data["station_name"].replace("/", "-").replace("\\", "-")
         data_date = data["data_time"].replace("/", "-")
-        output_filename = f"{station_name}_{data_date}_高压巡检报告.docx"
+        # output_filename = f"{station_name}_{data_date}_高压巡检报告.docx"
+        output_filename = f"{station_name}_{data_date}_{grid_type}巡检报告.docx" #名称中体现高压/低压
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
 
         doc.save(output_path)
@@ -462,6 +636,8 @@ def main():
     print(f"\n🎉 全部生成完成！共生成 {total} 份报告")
     print(f"📂 报告保存路径：{os.path.abspath(OUTPUT_FOLDER)}")
 
+    # 关闭日志文件
+    tee.close()
 
 if __name__ == "__main__":
     main()
