@@ -2,6 +2,27 @@
 
 
 
+## [V4] - 2026-06-22 -增加报告生成后自动邮件通知功能+报告直接输出到光伏组目录
+
+更新内容：在现有基础上新增【生成报告后自动邮件通知】的功能。发送邮件复用之前的是【pthoto_edit.py】中的【def send_mail(smtp_server, smtp_port, user, password, to_addrs, subject, body):】函数
+
+​	原来程序中业务处理对应的excel名称是【YH光伏巡检-照片巡检_xg简易自动巡检系统_巡检记录-照片xg (2).xlsx】，现在是【DH光伏巡检-逆变器+并网点_xg简易自动巡检系统_总-昨日.xlsx】。更新程序中excel文件的匹配规则：EXCEL_PATTERN
+
+更新文件：【generate_report.py】
+
+
+
+更新内容：报告直接输出到光伏组目录
+
+```
+# OUTPUT_FOLDER = "../output/生成的报告/"       # 本机测试环境的路径
+OUTPUT_FOLDER = "E:/光伏运维/01流水资料/自动生成的报告/"       # 本机测试环境的路径
+```
+
+更新文件：【generate_report.py】
+
+
+
 ## [V4] - 2026-06-22 - 修复excel文件名问题
 
 更新内容：原来程序中业务处理对应的excel名称是【YH光伏巡检-照片巡检_xg简易自动巡检系统_巡检记录-照片xg (2).xlsx】，现在是【DH光伏巡检-逆变器+并网点_xg简易自动巡检系统_总-昨日.xlsx】。更新程序中excel文件的匹配规则：EXCEL_PATTERN

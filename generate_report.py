@@ -18,7 +18,8 @@ TEMPLATE_HIGH = "光伏巡检报告模板-高压.docx"
 TEMPLATE_LOW  = "光伏巡检报告模板-低压.docx"
 
 PHOTO_FOLDER = "D:/exercise/python/photos/"       # 照片及 Excel 存放目录
-OUTPUT_FOLDER = "../output/生成的报告/"
+# OUTPUT_FOLDER = "../output/生成的报告/"       # 本机测试环境的路径
+OUTPUT_FOLDER = "E:/光伏运维/01流水资料/自动生成的报告/"       # 本机测试环境的路径
 LOG_DIR = "D:/exercise/python/logs"    # 日志配置（新增）
 
 # 自动匹配 Excel 文件
@@ -35,6 +36,15 @@ EXCEL_PATH = excel_files[0]
 print(f"📂 自动匹配 Excel 文件：{EXCEL_PATH}")
 
 EXCEL_SHEET_NAME = "xg简易自动巡检系统"
+# ==============================================
+# 邮件通知配置（请根据实际环境修改）
+# ==============================================
+SMTP_SERVER = "smtp.qq.com"        # 公司邮件服务器地址
+SMTP_PORT = 587                         # 通常 465(SSL) 或 587(TLS)
+SMTP_USER = "2604182970@qq.com"  # 发件邮箱
+SMTP_PASSWORD = "tjeqnwmhwyiyecbg"         # 邮箱密码或授权码
+MAIL_TO = "330951244@qq.com,xiaoguo9486@163.com"           # 收件人，多个用英文逗号分隔
+MAIL_SUBJECT = "光伏巡检报告已生成"      # 邮件主题
 
 # 图片解压设置
 ZIP_PATTERN = "*巡检*附件*.zip"                   # 飞书下载的压缩包匹配规则
@@ -426,11 +436,52 @@ def setup_logging():
     sys.stdout = tee
     return tee, log_path
 
-# ==============================================
-# 新增：解压图片函数
-# ==============================================
-def unpack_photos():
-    ...
+
+def send_mail(smtp_server, smtp_port, user, password, to_addrs, subject, body):
+    import smtplib
+    from email.mime.text import MIMEText
+
+    print("[DEBUG] send_mail 被调用")
+    if isinstance(to_addrs, str):
+        to_addrs = [addr.strip() for addr in to_addrs.split(',') if addr.strip()]
+    if not to_addrs:
+        print("[DEBUG] 收件人地址为空，返回失败")
+        return False, "收件人地址为空"
+
+    try:
+        print("[DEBUG] 开始构建 MIMEText")
+        msg = MIMEText(body, 'plain', 'utf-8')
+        msg['From'] = user
+        msg['To'] = ', '.join(to_addrs)
+        msg['Subject'] = subject
+        print(f"[DEBUG] 邮件构建完成，主题: {subject}, 收件人: {to_addrs}")
+
+        port = int(smtp_port)
+        print(f"[DEBUG] 准备连接服务器 {smtp_server}:{port}")
+        if port == 465:
+            server = smtplib.SMTP_SSL(smtp_server, port, timeout=15)
+            print("[DEBUG] 使用 SMTP_SSL 连接")
+        else:
+            server = smtplib.SMTP(smtp_server, port, timeout=15)
+            server.ehlo()
+            if port == 587:
+                server.starttls()
+                server.ehlo()
+            print(f"[DEBUG] 使用普通 SMTP 连接 (端口 {port})")
+
+        print("[DEBUG] 准备登录")
+        server.login(user, password)
+        print("[DEBUG] 登录成功，准备发送")
+        server.sendmail(user, to_addrs, msg.as_bytes())
+        print("[DEBUG] 发送成功，准备退出")
+        server.quit()
+        return True, f"邮件已发送至 {', '.join(to_addrs)}"
+    except Exception as e:
+        import traceback
+        print("[DEBUG] 发生异常：")
+        traceback.print_exc()
+        return False, f"邮件发送失败: {e}"
+
 
 # ==============================================
 # 新增：解压图片函数
@@ -637,8 +688,22 @@ def main():
     print(f"\n🎉 全部生成完成！共生成 {total} 份报告")
     print(f"📂 报告保存路径：{os.path.abspath(OUTPUT_FOLDER)}")
 
-    # 关闭日志文件
-    tee.close()
+    # ---------- 发送邮件通知 ----------
+    mail_body = f"本次巡检报告已生成完毕，共 {total} 份报告。\n"
+    mail_body += f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    mail_body += f"报告存放路径：{os.path.abspath(OUTPUT_FOLDER)}\n"
+    # 可在此添加报告文件列表，如需要可自行扩展
+    success, msg = send_mail(SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
+                             MAIL_TO, MAIL_SUBJECT, mail_body)
+    if success:
+        print(f"📧 邮件通知发送成功：{msg}")
+    else:
+        print(f"⚠️ 邮件通知发送失败：{msg}")
+
+    # 关闭日志文件（先恢复 stdout 再关闭，避免销毁时 flush 已关闭的文件）
+    sys.stdout = tee.console
+    tee.log_file.close()
+
 
 if __name__ == "__main__":
     main()
