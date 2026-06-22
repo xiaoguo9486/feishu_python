@@ -2,6 +2,23 @@
 
 
 
+## [V4] - 2026-06-22 -2 自动识别 `photos` 文件夹内的多组巡检记录文件并处理
+
+更新内容：
+
+- 自动识别 `photos` 文件夹内的多个 Excel 巡检记录文件（文件名包含 `xg简易自动巡检系统`），并匹配对应的压缩包
+- 智能适配 Windows 系统自动添加的文件重名后缀（如 `(1)`、`(2)`），确保 Excel 与 ZIP 正确配对
+
+更新文件：重点是【generate_report.py】中的
+
+```
+def find_zip_for_excel(excel_path):
+    """根据 Excel 文件名查找配套 ZIP（适配 Windows 对 Excel 和 ZIP 都可能添加的 (1) 等重名后缀）"""
+    import re
+```
+
+
+
 ## [V4] - 2026-06-22 -增加报告生成后自动邮件通知功能+报告直接输出到光伏组目录
 
 更新内容：在现有基础上新增【生成报告后自动邮件通知】的功能。发送邮件复用之前的是【pthoto_edit.py】中的【def send_mail(smtp_server, smtp_port, user, password, to_addrs, subject, body):】函数

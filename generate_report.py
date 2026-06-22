@@ -29,13 +29,19 @@ LOG_DIR = "D:/exercise/python/logs"    # 日志配置（新增）
 # 新：在 D:/exercise/python/photos/ 里搜索
 # EXCEL_PATTERN = "*巡检记录-照片xg*.xlsx"
 EXCEL_PATTERN = "*xg简易自动巡检系统*.xlsx"
-excel_files = glob.glob(os.path.join(PHOTO_FOLDER, EXCEL_PATTERN))
-if not excel_files:
-    raise FileNotFoundError(f"未找到匹配的 Excel 文件，模式：{EXCEL_PATTERN}")
-EXCEL_PATH = excel_files[0]
-print(f"📂 自动匹配 Excel 文件：{EXCEL_PATH}")
-
 EXCEL_SHEET_NAME = "xg简易自动巡检系统"
+
+# #只匹配一个 Excel 和一个对应的 ZIP的代码
+# excel_files = glob.glob(os.path.join(PHOTO_FOLDER, EXCEL_PATTERN))
+# if not excel_files:
+#     raise FileNotFoundError(f"未找到匹配的 Excel 文件，模式：{EXCEL_PATTERN}")
+# EXCEL_PATH = excel_files[0]
+# print(f"📂 自动匹配 Excel 文件：{EXCEL_PATH}")
+
+# 图片解压设置
+ZIP_PATTERN = "*巡检*附件*.zip"                   # 飞书下载的压缩包匹配规则
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'}
+
 # ==============================================
 # 邮件通知配置（请根据实际环境修改）
 # ==============================================
@@ -45,10 +51,6 @@ SMTP_USER = "2604182970@qq.com"  # 发件邮箱
 SMTP_PASSWORD = "tjeqnwmhwyiyecbg"         # 邮箱密码或授权码
 MAIL_TO = "330951244@qq.com,xiaoguo9486@163.com"           # 收件人，多个用英文逗号分隔
 MAIL_SUBJECT = "光伏巡检报告已生成"      # 邮件主题
-
-# 图片解压设置
-ZIP_PATTERN = "*巡检*附件*.zip"                   # 飞书下载的压缩包匹配规则
-IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'}
 
 # TEMPLATE_PATH = "光伏巡检报告模板-高压.docx"
 # EXCEL_PATH = "金田铜业报告-YH光伏巡检-照片巡检.xlsx"
@@ -60,6 +62,14 @@ IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'}
 PHOTO_WIDTH = Inches(2.2)  # ✅ 缩小至2.0英寸，保证三张图能在A4表格中并排
 PHOTO_PER_ROW = 3
 DEBUG_MODE = False
+
+# 搜索所有匹配的 Excel 和 ZIP 文件（用于后续分组）
+all_excel_files = glob.glob(os.path.join(PHOTO_FOLDER, EXCEL_PATTERN))
+all_zip_files = glob.glob(os.path.join(PHOTO_FOLDER, ZIP_PATTERN))
+
+if not all_excel_files:
+    raise FileNotFoundError(f"未找到匹配的 Excel 文件，模式：{os.path.join(PHOTO_FOLDER, EXCEL_PATTERN)}")
+print(f"📂 找到 {len(all_excel_files)} 个 Excel 文件，{len(all_zip_files)} 个 ZIP 文件")
 
 # 调试模式：关闭后只输出关键日志
 DEBUG_MODE = False
@@ -482,6 +492,29 @@ def send_mail(smtp_server, smtp_port, user, password, to_addrs, subject, body):
         traceback.print_exc()
         return False, f"邮件发送失败: {e}"
 
+""" 面对可能存在的文件名是【YH光伏巡检-照片巡检_xg简易自动巡检系统_照片-昨日 (1).xlsx】问题
+处理逻辑是：逻辑是：
+对于每个 Excel 文件，先去掉它自身可能存在的 (数字) 后缀，得到 clean_base（文件名没有 (1)，所以 clean_base 就等于 YH光伏巡检...照片-昨日）。
+正则 r'\s*\(\d+\)(?=\.zip$)' 会去掉 .zip 前面可能存在的 (1)、(2) 等，无论 ZIP 有没有被重命名都能正确匹配
+同时处理了 Excel 和 ZIP 双方的重名后缀
+"""
+def find_zip_for_excel(excel_path):
+    """根据 Excel 文件名查找配套 ZIP（适配 Windows 对 Excel 和 ZIP 都可能添加的 (1) 等重名后缀）"""
+    import re
+    base = os.path.splitext(os.path.basename(excel_path))[0]
+    # 去掉 Excel 末尾可能存在的 (数字) 得到 clean_base
+    clean_base = re.sub(r'\s*\(\d+\)\s*$', '', base)
+
+    # 遍历所有已知 ZIP 文件，寻找匹配项
+    for zip_full in all_zip_files:          # all_zip_files 是全局变量
+        zip_name = os.path.basename(zip_full)
+        # 去掉 ZIP 文件名末尾可能的 (数字) 后缀（例如 _附件(1).zip → _附件.zip）
+        zip_clean = re.sub(r'\s*\(\d+\)(?=\.zip$)', '', zip_name, flags=re.IGNORECASE)
+        # 期望的文件名
+        expected = clean_base + "_附件.zip"
+        if zip_clean == expected:
+            return zip_full
+    return None
 
 # ==============================================
 # 新增：解压图片函数
@@ -579,120 +612,147 @@ def main():
     tee, log_path = setup_logging()
     print(f"📝 日志文件：{log_path}")
 
-    # ---------- 第 0 步：自动解压图片 ----------
+    # ---------- 第 0 步：自动解压所有图片 ----------
     unpack_photos()
 
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-    print("📥 正在读取Excel数据...")
-    df = pd.read_excel(EXCEL_PATH, sheet_name=EXCEL_SHEET_NAME)
-    df.columns = df.columns.str.strip()
+    total_reports = 0
+    missing_zip_list = []          # 记录缺少 ZIP 的 Excel
+    summary_details = []           # 用于邮件内容
 
-    total = len(df)
-    for index, excel_row in df.iterrows():
-        print(f"\n🔄 正在生成第 {index+1}/{total} 份报告...")
+    # ---------- 遍历每一个 Excel 文件 ----------
+    for excel_path in all_excel_files:
+        print(f"\n{'='*60}")
+        print(f"📂 正在处理 Excel：{os.path.basename(excel_path)}")
 
-        grid_type = str(excel_row["并网类型"]).strip()
-        if "高压" in grid_type:
-            template_path = TEMPLATE_HIGH
-        elif "低压" in grid_type:
-            template_path = TEMPLATE_LOW
-        else:
-            print(f"   ⚠️  无法识别并网类型 '{grid_type}'，默认使用高压模板")
-            template_path = TEMPLATE_HIGH
+        # 检查配套 ZIP
+        zip_path = find_zip_for_excel(excel_path)
+        if not zip_path:
+            missing_zip_list.append(os.path.basename(excel_path))
+            print("⚠️  未找到配套压缩包，将仅基于已有图片生成报告")
 
-        print(f"   📄 使用模板：{os.path.basename(template_path)}")
-        doc = Document(template_path)
+        print("📥 正在读取Excel数据...")
+        df = pd.read_excel(excel_path, sheet_name=EXCEL_SHEET_NAME)
+        df.columns = df.columns.str.strip()
 
-        # 1. 基础数据
-        data = {
-            "entry_time": str(excel_row["录入时间"]).split(" ")[0] if not pd.isna(excel_row["录入时间"]) else "",
-            "data_time": str(excel_row["数据时间"]).split(" ")[0] if not pd.isna(excel_row["数据时间"]) else "",
-            "area": str(excel_row["所属区域"]) if not pd.isna(excel_row["所属区域"]) else "",
-            "station_name": str(excel_row["站点名称"]) if not pd.isna(excel_row["站点名称"]) else "",
-            "grid_type": str(excel_row["并网类型"]) if not pd.isna(excel_row["并网类型"]) else "",
-            "roof_type": str(excel_row["屋面类型"]) if not pd.isna(excel_row["屋面类型"]) else "",
-            "inspector": str(excel_row["录入人"]) if not pd.isna(excel_row["录入人"]) else "",
-            "generate_date": datetime.now().strftime("%Y/%m/%d"),
-            "inspection_result": "正常",
-            "problem_summary": str(excel_row["照片问题反馈汇总"]) if not pd.isna(excel_row["照片问题反馈汇总"]) else ""
-        }
+        excel_reports = 0
+        for index, excel_row in df.iterrows():
+            print(f"\n🔄 正在生成第 {index+1}/{len(df)} 份报告...")
 
-        # ---------- 构建反馈列索引表（与图片查找共用） ----------
-        feedback_index_map = {}
-        for idx, col in enumerate(df.columns):
-            col_str = str(col).strip()
-            if col_str.startswith("照片问题反馈"):
-                try:
-                    num = int(col_str.replace("照片问题反馈", "").strip())
-                    feedback_index_map[num] = idx
-                except:
-                    pass
+            grid_type = str(excel_row["并网类型"]).strip()
+            if "高压" in grid_type:
+                template_path = TEMPLATE_HIGH
+            elif "低压" in grid_type:
+                template_path = TEMPLATE_LOW
+            else:
+                print(f"   ⚠️  无法识别并网类型 '{grid_type}'，默认使用高压模板")
+                template_path = TEMPLATE_HIGH
 
-        # 2. 巡检项数据（修复版：利用反馈列定位状态列）
-        for item_num in range(1, 72):
-            status_col = None
+            print(f"   📄 使用模板：{os.path.basename(template_path)}")
+            doc = Document(template_path)
 
-            # 方法1：通过反馈列定位，状态列是反馈列的前一列
-            if item_num in feedback_index_map:
-                fb_idx = feedback_index_map[item_num]
-                if fb_idx - 1 >= 0:
-                    prev_col = df.columns[fb_idx - 1]
-                    prev_str = str(prev_col).strip()
-                    # 确保前一列不是照片列，也不是另一个反馈列
-                    if "巡检照片" not in prev_str and "照片问题反馈" not in prev_str:
-                        status_col = prev_col
+            # 1. 基础数据（保持不变）
+            data = {
+                "entry_time": str(excel_row["录入时间"]).split(" ")[0] if not pd.isna(excel_row["录入时间"]) else "",
+                "data_time": str(excel_row["数据时间"]).split(" ")[0] if not pd.isna(excel_row["数据时间"]) else "",
+                "area": str(excel_row["所属区域"]) if not pd.isna(excel_row["所属区域"]) else "",
+                "station_name": str(excel_row["站点名称"]) if not pd.isna(excel_row["站点名称"]) else "",
+                "grid_type": str(excel_row["并网类型"]) if not pd.isna(excel_row["并网类型"]) else "",
+                "roof_type": str(excel_row["屋面类型"]) if not pd.isna(excel_row["屋面类型"]) else "",
+                "inspector": str(excel_row["录入人"]) if not pd.isna(excel_row["录入人"]) else "",
+                "generate_date": datetime.now().strftime("%Y/%m/%d"),
+                "inspection_result": "正常",
+                "problem_summary": str(excel_row["照片问题反馈汇总"]) if not pd.isna(excel_row["照片问题反馈汇总"]) else ""
+            }
 
-            # 方法2：后备，使用原来的数字匹配
-            if not status_col:
-                for col in df.columns:
-                    col_str = str(col).strip()
-                    col_num = extract_column_number(col_str)
-                    if col_num == item_num and "-巡检照片" not in col_str and "照片问题反馈" not in col_str:
-                        status_col = col
-                        break
+            # ---------- 构建反馈列索引表（与图片查找共用） ----------
+            feedback_index_map = {}
+            for idx, col in enumerate(df.columns):
+                col_str = str(col).strip()
+                if col_str.startswith("照片问题反馈"):
+                    try:
+                        num = int(col_str.replace("照片问题反馈", "").strip())
+                        feedback_index_map[num] = idx
+                    except:
+                        pass
 
-            remark_col = f"照片问题反馈{item_num}"
-            data[f"item_{item_num}_status"] = str(excel_row[status_col]) if status_col and not pd.isna(
-                excel_row[status_col]) else "正常"
-            data[f"item_{item_num}_remark"] = str(excel_row[remark_col]) if remark_col in df.columns and not pd.isna(
-                excel_row[remark_col]) else ""
+            # 2. 巡检项数据（保持不变）
+            for item_num in range(1, 72):
+                status_col = None
+                if item_num in feedback_index_map:
+                    fb_idx = feedback_index_map[item_num]
+                    if fb_idx - 1 >= 0:
+                        prev_col = df.columns[fb_idx - 1]
+                        prev_str = str(prev_col).strip()
+                        if "巡检照片" not in prev_str and "照片问题反馈" not in prev_str:
+                            status_col = prev_col
+                if not status_col:
+                    for col in df.columns:
+                        col_str = str(col).strip()
+                        col_num = extract_column_number(col_str)
+                        if col_num == item_num and "-巡检照片" not in col_str and "照片问题反馈" not in col_str:
+                            status_col = col
+                            break
+                remark_col = f"照片问题反馈{item_num}"
+                data[f"item_{item_num}_status"] = str(excel_row[status_col]) if status_col and not pd.isna(
+                    excel_row[status_col]) else "正常"
+                data[f"item_{item_num}_remark"] = str(excel_row[remark_col]) if remark_col in df.columns and not pd.isna(
+                    excel_row[remark_col]) else ""
 
-        # 3. 状态汇总
-        status_data = generate_status_summary(data)
-        data.update(status_data)
+            # 3. 状态汇总
+            status_data = generate_status_summary(data)
+            data.update(status_data)
 
-        # 4. 替换文本
-        replace_text_placeholders(doc, data)
+            # 4. 替换文本
+            replace_text_placeholders(doc, data)
 
-        # 5. 异常明细
-        abnormal_list = parse_abnormal_summary(data["problem_summary"])
-        fill_abnormal_table(doc, abnormal_list)
+            # 5. 异常明细
+            abnormal_list = parse_abnormal_summary(data["problem_summary"])
+            fill_abnormal_table(doc, abnormal_list)
 
-        # 6. 插入图片
-        insert_photo_groups(doc, excel_row, df.columns)
+            # 6. 插入图片
+            insert_photo_groups(doc, excel_row, df.columns)
 
-        # ===== 【新增】异常状态标红加粗 =====
-        set_abnormal_status_red(doc)
+            # 异常状态标红加粗
+            set_abnormal_status_red(doc)
 
-        # 7. 保存报告
-        station_name = data["station_name"].replace("/", "-").replace("\\", "-")
-        data_date = data["data_time"].replace("/", "-")
-        # output_filename = f"{station_name}_{data_date}_高压巡检报告.docx"
-        output_filename = f"{station_name}_{data_date}_{grid_type}巡检报告.docx" #名称中体现高压/低压
-        output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+            # 7. 保存报告
+            station_name = data["station_name"].replace("/", "-").replace("\\", "-")
+            data_date = data["data_time"].replace("/", "-")
+            output_filename = f"{station_name}_{data_date}_{grid_type}巡检报告.docx"
+            output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+            doc.save(output_path)
+            print(f"✅ 已生成：{output_path}")
+            excel_reports += 1
 
-        doc.save(output_path)
-        print(f"✅ 已生成：{output_path}")
+        print(f"✅ 本 Excel 生成 {excel_reports} 份报告")
+        total_reports += excel_reports
+        summary_details.append((os.path.basename(excel_path), excel_reports, bool(zip_path)))
 
-    print(f"\n🎉 全部生成完成！共生成 {total} 份报告")
+    # ========== 汇总输出 ==========
+    print(f"\n{'='*60}")
+    print(f"🎉 全部处理完成！共处理 {len(all_excel_files)} 个 Excel 文件，生成 {total_reports} 份报告")
     print(f"📂 报告保存路径：{os.path.abspath(OUTPUT_FOLDER)}")
+    if missing_zip_list:
+        print(f"⚠️  以下 Excel 文件缺少配套压缩包：")
+        for name in missing_zip_list:
+            print(f"   - {name}")
 
-    # ---------- 发送邮件通知 ----------
-    mail_body = f"本次巡检报告已生成完毕，共 {total} 份报告。\n"
+    # ========== 发送邮件通知 ==========
+    mail_body = f"本次巡检报告已生成完毕。\n"
+    mail_body += f"处理文件数：{len(all_excel_files)}\n"
+    mail_body += f"生成报告总数：{total_reports}\n"
     mail_body += f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
     mail_body += f"报告存放路径：{os.path.abspath(OUTPUT_FOLDER)}\n"
-    # 可在此添加报告文件列表，如需要可自行扩展
+    for excel_name, count, has_zip in summary_details:
+        zip_status = "有压缩包" if has_zip else "无压缩包（使用已有图片）"
+        mail_body += f"  · {excel_name}：生成 {count} 份报告，{zip_status}\n"
+    if missing_zip_list:
+        mail_body += f"\n注意：以下 Excel 缺少配套 ZIP：\n"
+        for name in missing_zip_list:
+            mail_body += f"  - {name}\n"
+
     success, msg = send_mail(SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
                              MAIL_TO, MAIL_SUBJECT, mail_body)
     if success:
@@ -700,10 +760,9 @@ def main():
     else:
         print(f"⚠️ 邮件通知发送失败：{msg}")
 
-    # 关闭日志文件（先恢复 stdout 再关闭，避免销毁时 flush 已关闭的文件）
+    # 关闭日志文件
     sys.stdout = tee.console
     tee.log_file.close()
-
 
 if __name__ == "__main__":
     main()
