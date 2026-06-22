@@ -26,7 +26,8 @@ LOG_DIR = "D:/exercise/python/logs"    # 日志配置（新增）
 # EXCEL_PATTERN = "*巡检记录-照片xg*.xlsx"
 # excel_files = glob.glob(EXCEL_PATTERN)
 # 新：在 D:/exercise/python/photos/ 里搜索
-EXCEL_PATTERN = "*巡检记录-照片xg*.xlsx"
+# EXCEL_PATTERN = "*巡检记录-照片xg*.xlsx"
+EXCEL_PATTERN = "*xg简易自动巡检系统*.xlsx"
 excel_files = glob.glob(os.path.join(PHOTO_FOLDER, EXCEL_PATTERN))
 if not excel_files:
     raise FileNotFoundError(f"未找到匹配的 Excel 文件，模式：{EXCEL_PATTERN}")
